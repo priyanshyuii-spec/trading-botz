@@ -1,0 +1,7 @@
+flask
+requests
+gunicorn
+scikit-learn
+pandas
+numpy
+yfinance
