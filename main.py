@@ -38,8 +38,9 @@ def save_trade_history(trades):
     with open(LOG_FILE, "w") as f:
         json.dump({"trades": trades}, f, indent=2)
 
-# --- ADVANCED TECHNICAL INDICATORS (ATR & ADX) ---
+# --- FIXED TECHNICAL INDICATORS (ATR & ADX) ---
 def calculate_indicators(df):
+    df = df.copy()
     # RSI (14)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -52,24 +53,28 @@ def calculate_indicators(df):
     df['VWAP'] = (typical_price * df['Volume']).cumsum() / df['Volume'].cumsum()
     df['VWAP_Diff'] = df['Close'] - df['VWAP']
 
-    # ATR (14) - Volatility Memory
+    # ATR (14)
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(14).mean()
 
-    # ADX (14) - Trend Strength
-    up_move = df['High'].diff()
-    down_move = df['Low'].diff().iloc[::-1] # Reverse
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0)
-    
+    # ADX (14) - Clean Calculation
+    up_move = df['High'] - df['High'].shift(1)
+    down_move = df['Low'].shift(1) - df['Low']
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
     tr14 = tr.rolling(14).sum()
-    plus_di = 100 * (pd.Series(plus_dm).rolling(14).sum() / tr14)
-    minus_di = 100 * (pd.Series(minus_dm).rolling(14).sum() / tr14)
-    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
-    df['ADX'] = dx.rolling(14).mean()
+    plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(14).sum() / tr14)
+    minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(14).sum() / tr14)
+
+    di_sum = plus_di + minus_di
+    di_diff = np.abs(plus_di - minus_di)
+    dx = 100 * (di_diff / np.where(di_sum == 0, 1, di_sum))
+    df['ADX'] = pd.Series(dx, index=df.index).rolling(14).mean()
 
     return df
 
@@ -84,10 +89,9 @@ def train_ai_model():
     if not all(col in df.columns for col in required_cols):
         return None
 
-    X = df[['rsi', 'vwap_diff', 'atr', 'adx']]
-    y = df['win_loss']  # 1 for Win (Target Hit), 0 for Loss (SL Hit)
+    X = df[['rsi', 'vwap_diff', 'atr', 'adx']].fillna(0)
+    y = df['win_loss']
 
-    # Advanced Weighted Gradient Boosting Engine
     model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
     model.fit(X, y)
     return model
@@ -103,22 +107,20 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         df = calculate_indicators(df)
         
         latest = df.iloc[-1]
-        close = latest['Close'].item()
-        rsi = latest['RSI'].item()
-        vwap = latest['VWAP'].item()
-        vwap_diff = latest['VWAP_Diff'].item()
-        atr = latest['ATR'].item()
-        adx = latest['ADX'].item() if not np.isnan(latest['ADX'].item()) else 20.0
+        close = float(latest['Close'])
+        rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
+        vwap = float(latest['VWAP'])
+        vwap_diff = float(latest['VWAP_Diff'])
+        atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 1.0
+        adx = float(latest['ADX']) if not np.isnan(latest['ADX']) else 20.0
 
         signal = None
-        # ADX > 20 ensures we trade in strong trends
         if rsi < 35 and close > vwap and adx > 20:
             signal = "BUY"
         elif rsi > 65 and close < vwap and adx > 20:
             signal = "SELL"
 
         if signal:
-            # Risk-Reward 1:2 Setup (Stop Loss & Target based on ATR)
             stop_loss = close - (1.5 * atr) if signal == "BUY" else close + (1.5 * atr)
             target = close + (3.0 * atr) if signal == "BUY" else close - (3.0 * atr)
 
@@ -137,7 +139,6 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 send_telegram(msg)
                 
                 trades = load_trade_history()
-                # Virtual Win/Loss Simulation for ML Memory
                 win_loss = 1 if (rsi < 30 or rsi > 70) else 0 
                 pnl = (target - close) if win_loss == 1 else (stop_loss - close)
                 
@@ -154,7 +155,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 save_trade_history(trades)
 
             elif TRADE_MODE == "REAL":
-                msg = f"🚀 [LIVE REAL TRADE] Signal: {signal} | Stock: {symbol} | Price: ₹{close:.2f} | Target: ₹{target:.2f}"
+                msg = f"🚀 [LIVE REAL TRADE] Signal: {signal} | Stock: {symbol} | Price: ₹{close:.2f}"
                 send_telegram(msg)
 
     except Exception as e:
