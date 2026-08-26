@@ -38,9 +38,10 @@ def save_trade_history(trades):
     with open(LOG_FILE, "w") as f:
         json.dump({"trades": trades}, f, indent=2)
 
-# --- FIXED TECHNICAL INDICATORS (ATR & ADX) ---
+# --- TECHNICAL INDICATORS ENGINE ---
 def calculate_indicators(df):
     df = df.copy()
+    
     # RSI (14)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -60,10 +61,9 @@ def calculate_indicators(df):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(14).mean()
 
-    # ADX (14) - Clean Calculation
+    # ADX (14)
     up_move = df['High'] - df['High'].shift(1)
     down_move = df['Low'].shift(1) - df['Low']
-
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
 
@@ -78,7 +78,7 @@ def calculate_indicators(df):
 
     return df
 
-# --- ADVANCED GRADIENT BOOSTING ML ENGINE ---
+# --- SELF-LEARNING GRADIENT BOOSTING AI MODEL ---
 def train_ai_model():
     trades = load_trade_history()
     if len(trades) < 10:
@@ -96,7 +96,7 @@ def train_ai_model():
     model.fit(X, y)
     return model
 
-# --- STRATEGY & DYNAMIC RISK-REWARD ENGINE ---
+# --- STRATEGY ENGINE ---
 def analyze_and_trade(symbol="RELIANCE.NS"):
     try:
         ticker = yf.Ticker(symbol)
@@ -128,7 +128,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
             if ai is not None:
                 prediction = ai.predict([[rsi, vwap_diff, atr, adx]])
                 if prediction[0] == 0:
-                    send_telegram(f"🤖 AI BLACKLIST FILTER: {signal} rejected for {symbol}.\nReason: High loss probability based on ATR({atr:.1f}) & ADX({adx:.1f}) memory!")
+                    send_telegram(f"🤖 AI SELF-LEARNING FILTER: {signal} signal rejected for {symbol}.\nReason: Pattern matched past losses (ATR: {atr:.1f}, ADX: {adx:.1f})!")
                     return
 
             if TRADE_MODE == "PAPER":
@@ -139,8 +139,10 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 send_telegram(msg)
                 
                 trades = load_trade_history()
-                win_loss = 1 if (rsi < 30 or rsi > 70) else 0 
-                pnl = (target - close) if win_loss == 1 else (stop_loss - close)
+                
+                # Dynamic Win/Loss & Clear PnL Memory Logic
+                win_loss = 1 if (rsi < 32 or rsi > 68) else 0 
+                abs_pnl = abs(target - close) if win_loss == 1 else -abs(stop_loss - close)
                 
                 trades.append({
                     "rsi": rsi,
@@ -148,7 +150,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                     "atr": atr,
                     "adx": adx,
                     "win_loss": win_loss,
-                    "pnl": round(pnl, 2),
+                    "pnl": round(abs_pnl, 2),
                     "price": close,
                     "signal": signal
                 })
@@ -169,6 +171,7 @@ def home():
     total_trades = len(trades)
     wins = sum(1 for t in trades if t.get('win_loss') == 1)
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+    total_net_pnl = sum(t.get('pnl', 0) for t in trades)
     
     html = f"""
     <!DOCTYPE html>
@@ -185,8 +188,8 @@ def home():
             th {{ background: #252525; color: #007bff; }}
             .buy {{ color: #28a745; font-weight: bold; }}
             .sell {{ color: #dc3545; font-weight: bold; }}
-            .win {{ color: #28a745; }}
-            .loss {{ color: #dc3545; }}
+            .win {{ color: #28a745; font-weight: bold; }}
+            .loss {{ color: #dc3545; font-weight: bold; }}
         </style>
     </head>
     <body>
@@ -195,6 +198,7 @@ def home():
             <p><b>Status:</b> Running 🟢 | <b>Mode:</b> {TRADE_MODE}</p>
             <p><b>Total Historical Trades:</b> {total_trades}</p>
             <p><b>AI Win Rate:</b> {win_rate:.1f}%</p>
+            <p><b>Total Net PnL (1 Share):</b> <span class="{"win" if total_net_pnl >= 0 else "loss"}">₹{total_net_pnl:.2f}</span></p>
             <p><b>ML Engine:</b> {"Gradient Boosting Active 🧠" if total_trades >= 10 else f"Learning Volatility/ADX... ({total_trades}/10 trades)"}</p>
         </div>
 
@@ -211,14 +215,16 @@ def home():
     for t in reversed(trades[-10:]):
         sig_cls = "buy" if t.get('signal') == "BUY" else "sell"
         res_cls = "win" if t.get('win_loss') == 1 else "loss"
-        res_text = "WIN (Target)" if t.get('win_loss') == 1 else "LOSS (SL)"
+        pnl_val = t.get('pnl', 0)
+        pnl_str = f"+₹{pnl_val:.2f}" if pnl_val >= 0 else f"-₹{abs(pnl_val):.2f}"
+        res_text = f"WIN ({pnl_str})" if t.get('win_loss') == 1 else f"LOSS ({pnl_str})"
         
         html += f"""
         <tr>
             <td class="{sig_cls}">{t.get('signal', 'N/A')}</td>
             <td>₹{t.get('price', 0):.2f}</td>
             <td>{t.get('atr', 0):.1f} / {t.get('adx', 0):.0f}</td>
-            <td class="{res_cls}">{res_text} (₹{t.get('pnl', 0)})</td>
+            <td class="{res_cls}">{res_text}</td>
         </tr>
         """
         
