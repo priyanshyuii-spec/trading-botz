@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 from flask import Flask
 import yfinance as yf
 import pandas as pd
@@ -15,12 +16,16 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 
+# Cache to prevent Yahoo Rate Limiting
+LAST_FETCH_TIME = 0
+CACHED_DF = None
+
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         import requests
         try:
-            requests.post(url, json={"chat_id": CHAT_ID, "text": message})
+            requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=5)
         except Exception as e:
             logging.error(f"Telegram Error: {e}")
 
@@ -87,12 +92,26 @@ def train_ai_model():
     return model
 
 def analyze_and_trade(symbol="RELIANCE.NS"):
-    try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period="5d", interval="5m")
-        if df.empty or len(df) < 30:
+    global LAST_FETCH_TIME, CACHED_DF
+    current_time = time.time()
+    
+    # 5 मिनट की कूलडाउन ताकि Rate Limit न आए
+    if current_time - LAST_FETCH_TIME < 300 and CACHED_DF is not None:
+        df = CACHED_DF
+    else:
+        try:
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(period="5d", interval="5m")
+            if not df.empty and len(df) >= 30:
+                CACHED_DF = df
+                LAST_FETCH_TIME = current_time
+            else:
+                return
+        except Exception as e:
+            logging.error(f"Yahoo Fetch Error (Rate Limit Avoided): {e}")
             return
-        
+
+    try:
         df = calculate_indicators(df)
         latest = df.iloc[-1]
         close = float(latest['Close'])
@@ -219,34 +238,25 @@ def home():
             @media (max-width: 900px) {{
                 body {{ flex-direction: column; }}
                 .sidebar {{ width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 15px; }}
-                .brand span, .nav-item span {{ display: inline; }}
             }}
         </style>
     </head>
     <body>
-
-        <!-- Sidebar Navigation -->
         <aside class="sidebar">
-            <div class="brand">
-                <i class="fa-solid fa-robot"></i>
-                <span>NEXUS AI TRADING</span>
-            </div>
+            <div class="brand"><i class="fa-solid fa-robot"></i><span>NEXUS AI TRADING</span></div>
             <ul class="nav-list">
                 <li class="nav-item active"><a href="#"><i class="fa-solid fa-chart-line"></i><span>Live Terminal</span></a></li>
                 <li class="nav-item"><a href="#"><i class="fa-solid fa-brain"></i><span>AI ML Engine</span></a></li>
                 <li class="nav-item"><a href="#"><i class="fa-solid fa-history"></i><span>Trade Logs</span></a></li>
-                <li class="nav-item"><a href="#"><i class="fa-solid fa-sliders"></i><span>Risk Settings</span></a></li>
             </ul>
         </aside>
 
-        <!-- Main Content -->
         <main class="main-content">
             <div class="top-bar">
                 <h2>Overview</h2>
                 <div class="status-badge"><i class="fa-solid fa-circle-dot"></i> MODE: {TRADE_MODE} | STATUS: RUNNING 🟢</div>
             </div>
 
-            <!-- Stats Grid -->
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-title">Total Historical Trades</div>
@@ -257,7 +267,7 @@ def home():
                     <div class="stat-value win">{win_rate:.1f}%</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-title">Total Net PnL (1 Share)</div>
+                    <div class="stat-title">Total Net PnL</div>
                     <div class="stat-value {"win" if total_net_pnl >= 0 else "loss"}">₹{total_net_pnl:.2f}</div>
                 </div>
                 <div class="stat-card">
@@ -268,12 +278,10 @@ def home():
                 </div>
             </div>
 
-            <!-- TradingView Live Chart Visualizer -->
             <div class="chart-section">
                 <div id="tradingview_chart" style="height: 100%; width: 100%;"></div>
             </div>
 
-            <!-- Recent Execution Logs Table -->
             <div class="table-card">
                 <h3>📊 Trade Execution & Indicator Memory</h3>
                 <table>
