@@ -10,7 +10,6 @@ from sklearn.ensemble import GradientBoostingClassifier
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# --- CONFIGURATION ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
@@ -38,30 +37,24 @@ def save_trade_history(trades):
     with open(LOG_FILE, "w") as f:
         json.dump({"trades": trades}, f, indent=2)
 
-# --- TECHNICAL INDICATORS ENGINE ---
 def calculate_indicators(df):
     df = df.copy()
-    
-    # RSI (14)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    # VWAP & VWAP Diff
     typical_price = (df['High'] + df['Low'] + df['Close']) / 3
     df['VWAP'] = (typical_price * df['Volume']).cumsum() / df['Volume'].cumsum()
     df['VWAP_Diff'] = df['Close'] - df['VWAP']
 
-    # ATR (14)
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(14).mean()
 
-    # ADX (14)
     up_move = df['High'] - df['High'].shift(1)
     down_move = df['Low'].shift(1) - df['Low']
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
@@ -78,12 +71,10 @@ def calculate_indicators(df):
 
     return df
 
-# --- SELF-LEARNING GRADIENT BOOSTING AI MODEL ---
 def train_ai_model():
     trades = load_trade_history()
     if len(trades) < 10:
         return None
-    
     df = pd.DataFrame(trades)
     required_cols = ['rsi', 'vwap_diff', 'atr', 'adx', 'win_loss']
     if not all(col in df.columns for col in required_cols):
@@ -91,12 +82,10 @@ def train_ai_model():
 
     X = df[['rsi', 'vwap_diff', 'atr', 'adx']].fillna(0)
     y = df['win_loss']
-
     model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
     model.fit(X, y)
     return model
 
-# --- STRATEGY ENGINE ---
 def analyze_and_trade(symbol="RELIANCE.NS"):
     try:
         ticker = yf.Ticker(symbol)
@@ -105,7 +94,6 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
             return
         
         df = calculate_indicators(df)
-        
         latest = df.iloc[-1]
         close = float(latest['Close'])
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
@@ -128,7 +116,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
             if ai is not None:
                 prediction = ai.predict([[rsi, vwap_diff, atr, adx]])
                 if prediction[0] == 0:
-                    send_telegram(f"🤖 AI SELF-LEARNING FILTER: {signal} signal rejected for {symbol}.\nReason: Pattern matched past losses (ATR: {atr:.1f}, ADX: {adx:.1f})!")
+                    send_telegram(f"🤖 AI FILTER REJECT: {signal} signal for {symbol} rejected based on ML memory!")
                     return
 
             if TRADE_MODE == "PAPER":
@@ -139,8 +127,6 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 send_telegram(msg)
                 
                 trades = load_trade_history()
-                
-                # Dynamic Win/Loss & Clear PnL Memory Logic
                 win_loss = 1 if (rsi < 32 or rsi > 68) else 0 
                 abs_pnl = abs(target - close) if win_loss == 1 else -abs(stop_loss - close)
                 
@@ -156,14 +142,9 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 })
                 save_trade_history(trades)
 
-            elif TRADE_MODE == "REAL":
-                msg = f"🚀 [LIVE REAL TRADE] Signal: {signal} | Stock: {symbol} | Price: ₹{close:.2f}"
-                send_telegram(msg)
-
     except Exception as e:
         logging.error(f"Execution Error: {e}")
 
-# --- WEB MONITORING DASHBOARD ---
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
     analyze_and_trade()
@@ -175,61 +156,170 @@ def home():
     
     html = f"""
     <!DOCTYPE html>
-    <html>
+    <html lang="hi">
     <head>
-        <title>Smart AI Trading Dashboard</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>NEXUS AI TRADING TERMINAL</title>
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
         <style>
-            body {{ font-family: Arial, sans-serif; background: #121212; color: #fff; padding: 15px; }}
-            .card {{ background: #1e1e1e; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 5px solid #007bff; }}
-            h2 {{ color: #007bff; margin-top: 0; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }}
-            th, td {{ border: 1px solid #333; padding: 8px; text-align: left; }}
-            th {{ background: #252525; color: #007bff; }}
-            .buy {{ color: #28a745; font-weight: bold; }}
-            .sell {{ color: #dc3545; font-weight: bold; }}
-            .win {{ color: #28a745; font-weight: bold; }}
-            .loss {{ color: #dc3545; font-weight: bold; }}
+            :root {{
+                --bg-dark: #0b0e14;
+                --card-bg: #151a23;
+                --accent-cyan: #00f2fe;
+                --accent-purple: #7928ca;
+                --text-main: #ffffff;
+                --text-sub: #94a3b8;
+                --border: rgba(255, 255, 255, 0.08);
+                --win-green: #28a745;
+                --loss-red: #dc3545;
+            }}
+            * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }}
+            body {{ background-color: var(--bg-dark); color: var(--text-main); display: flex; min-height: 100vh; }}
+            
+            .sidebar {{
+                width: 250px; background: rgba(21, 26, 35, 0.85); backdrop-filter: blur(10px);
+                border-right: 1px solid var(--border); padding: 24px 16px; display: flex; flex-direction: column; gap: 30px;
+            }}
+            .brand {{
+                display: flex; align-items: center; gap: 12px; font-size: 1.2rem; font-weight: 800;
+                background: linear-gradient(45deg, var(--accent-cyan), var(--accent-purple));
+                -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            }}
+            .nav-list {{ list-style: none; display: flex; flex-direction: column; gap: 8px; }}
+            .nav-item a {{
+                display: flex; align-items: center; gap: 14px; padding: 12px 16px; color: var(--text-sub);
+                text-decoration: none; border-radius: 10px; font-weight: 500; transition: all 0.3s ease;
+            }}
+            .nav-item.active a, .nav-item a:hover {{
+                background: linear-gradient(90deg, rgba(0, 242, 254, 0.15), transparent);
+                color: var(--accent-cyan); border-left: 3px solid var(--accent-cyan);
+            }}
+
+            .main-content {{ flex: 1; padding: 25px; overflow-y: auto; }}
+            .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }}
+            .status-badge {{ background: rgba(0, 242, 254, 0.1); color: var(--accent-cyan); padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; border: 1px solid var(--accent-cyan); }}
+
+            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px; }}
+            .stat-card {{ background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 20px; position: relative; overflow: hidden; }}
+            .stat-card::before {{ content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: linear-gradient(90deg, var(--accent-cyan), transparent); }}
+            .stat-title {{ color: var(--text-sub); font-size: 0.85rem; margin-bottom: 6px; }}
+            .stat-value {{ font-size: 1.6rem; font-weight: 700; }}
+            .win {{ color: var(--win-green); }}
+            .loss {{ color: var(--loss-red); }}
+
+            .chart-section {{ background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 15px; margin-bottom: 25px; height: 500px; }}
+            
+            .table-card {{ background: var(--card-bg); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }}
+            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }}
+            th {{ background: rgba(255, 255, 255, 0.03); color: var(--accent-cyan); }}
+
+            @media (max-width: 900px) {{
+                body {{ flex-direction: column; }}
+                .sidebar {{ width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 15px; }}
+                .brand span, .nav-item span {{ display: inline; }}
+            }}
         </style>
     </head>
     <body>
-        <h2>🤖 Gradient Boosting AI Dashboard</h2>
-        <div class="card">
-            <p><b>Status:</b> Running 🟢 | <b>Mode:</b> {TRADE_MODE}</p>
-            <p><b>Total Historical Trades:</b> {total_trades}</p>
-            <p><b>AI Win Rate:</b> {win_rate:.1f}%</p>
-            <p><b>Total Net PnL (1 Share):</b> <span class="{"win" if total_net_pnl >= 0 else "loss"}">₹{total_net_pnl:.2f}</span></p>
-            <p><b>ML Engine:</b> {"Gradient Boosting Active 🧠" if total_trades >= 10 else f"Learning Volatility/ADX... ({total_trades}/10 trades)"}</p>
-        </div>
 
-        <h3>📊 Advanced Trade & Risk Memory Logs</h3>
-        <table>
-            <tr>
-                <th>Signal</th>
-                <th>Price</th>
-                <th>ATR / ADX</th>
-                <th>Result</th>
-            </tr>
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="brand">
+                <i class="fa-solid fa-robot"></i>
+                <span>NEXUS AI TRADING</span>
+            </div>
+            <ul class="nav-list">
+                <li class="nav-item active"><a href="#"><i class="fa-solid fa-chart-line"></i><span>Live Terminal</span></a></li>
+                <li class="nav-item"><a href="#"><i class="fa-solid fa-brain"></i><span>AI ML Engine</span></a></li>
+                <li class="nav-item"><a href="#"><i class="fa-solid fa-history"></i><span>Trade Logs</span></a></li>
+                <li class="nav-item"><a href="#"><i class="fa-solid fa-sliders"></i><span>Risk Settings</span></a></li>
+            </ul>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="top-bar">
+                <h2>Overview</h2>
+                <div class="status-badge"><i class="fa-solid fa-circle-dot"></i> MODE: {TRADE_MODE} | STATUS: RUNNING 🟢</div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-title">Total Historical Trades</div>
+                    <div class="stat-value">{total_trades}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">AI Win Rate</div>
+                    <div class="stat-value win">{win_rate:.1f}%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Total Net PnL (1 Share)</div>
+                    <div class="stat-value {"win" if total_net_pnl >= 0 else "loss"}">₹{total_net_pnl:.2f}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">Gradient Boosting AI</div>
+                    <div class="stat-value" style="font-size: 1.1rem; color: var(--accent-cyan);">
+                        {"GBM Model Active 🧠" if total_trades >= 10 else f"Training ({total_trades}/10 Trades)"}
+                    </div>
+                </div>
+            </div>
+
+            <!-- TradingView Live Chart Visualizer -->
+            <div class="chart-section">
+                <div id="tradingview_chart" style="height: 100%; width: 100%;"></div>
+            </div>
+
+            <!-- Recent Execution Logs Table -->
+            <div class="table-card">
+                <h3>📊 Trade Execution & Indicator Memory</h3>
+                <table>
+                    <tr>
+                        <th>Signal</th>
+                        <th>Price</th>
+                        <th>ATR / ADX</th>
+                        <th>Result & Profit</th>
+                    </tr>
     """
     
     for t in reversed(trades[-10:]):
-        sig_cls = "buy" if t.get('signal') == "BUY" else "sell"
+        sig_cls = "win" if t.get('signal') == "BUY" else "loss"
         res_cls = "win" if t.get('win_loss') == 1 else "loss"
         pnl_val = t.get('pnl', 0)
         pnl_str = f"+₹{pnl_val:.2f}" if pnl_val >= 0 else f"-₹{abs(pnl_val):.2f}"
-        res_text = f"WIN ({pnl_str})" if t.get('win_loss') == 1 else f"LOSS ({pnl_str})"
         
         html += f"""
         <tr>
-            <td class="{sig_cls}">{t.get('signal', 'N/A')}</td>
+            <td class="{sig_cls}"><b>{t.get('signal', 'N/A')}</b></td>
             <td>₹{t.get('price', 0):.2f}</td>
             <td>{t.get('atr', 0):.1f} / {t.get('adx', 0):.0f}</td>
-            <td class="{res_cls}">{res_text}</td>
+            <td class="{res_cls}">{"WIN" if t.get('win_loss') == 1 else "LOSS"} ({pnl_str})</td>
         </tr>
         """
         
     html += """
-        </table>
+                </table>
+            </div>
+        </main>
+
+        <script type="text/javascript">
+            new TradingView.widget({
+                "autosize": true,
+                "symbol": "BSE:RELIANCE",
+                "interval": "5",
+                "timezone": "Asia/Kolkata",
+                "theme": "dark",
+                "style": "1",
+                "locale": "en",
+                "toolbar_bg": "#f1f3f6",
+                "enable_publishing": false,
+                "hide_side_toolbar": false,
+                "container_id": "tradingview_chart"
+            });
+        </script>
     </body>
     </html>
     """
