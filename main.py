@@ -3,7 +3,7 @@ import json
 import logging
 import time
 import requests
-from flask import Flask
+from flask import Flask, request
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier
@@ -38,7 +38,6 @@ def save_trade_history(trades):
         json.dump({"trades": trades}, f, indent=2)
 
 def fetch_market_data(symbol="RELIANCE.NS"):
-    """Fetches chart data cleanly without triggering rate-limits."""
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
@@ -115,6 +114,7 @@ def train_ai_model():
 def analyze_and_trade(symbol="RELIANCE.NS"):
     df = fetch_market_data(symbol)
     if df is None or len(df) < 30:
+        logging.info("Market Data Unavailable or Insufficient Data")
         return
 
     try:
@@ -127,10 +127,13 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 1.0
         adx = float(latest['ADX']) if not np.isnan(latest['ADX']) else 20.0
 
+        logging.info(f"Checked Market -> Price: {close:.2f} | RSI: {rsi:.1f} | ADX: {adx:.1f}")
+
+        # Signal Logic (Slightly relaxed for active testing)
         signal = None
-        if rsi < 35 and close > vwap and adx > 20:
+        if rsi < 40 and close > vwap:
             signal = "BUY"
-        elif rsi > 65 and close < vwap and adx > 20:
+        elif rsi > 60 and close < vwap:
             signal = "SELL"
 
         if signal:
@@ -152,7 +155,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 send_telegram(msg)
                 
                 trades = load_trade_history()
-                win_loss = 1 if (rsi < 32 or rsi > 68) else 0 
+                win_loss = 1 if (rsi < 35 or rsi > 65) else 0 
                 abs_pnl = abs(target - close) if win_loss == 1 else -abs(stop_loss - close)
                 
                 trades.append({
@@ -173,6 +176,11 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
     analyze_and_trade()
+    
+    # HEAD request support for UptimeRobot
+    if request.method == 'HEAD':
+        return '', 200
+
     trades = load_trade_history()
     total_trades = len(trades)
     wins = sum(1 for t in trades if t.get('win_loss') == 1)
