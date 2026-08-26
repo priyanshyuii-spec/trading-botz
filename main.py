@@ -2,8 +2,8 @@ import os
 import json
 import logging
 import time
+import requests
 from flask import Flask
-import yfinance as yf
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier
@@ -16,14 +16,9 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 
-# Cache to prevent Yahoo Rate Limiting
-LAST_FETCH_TIME = 0
-CACHED_DF = None
-
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        import requests
         try:
             requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=5)
         except Exception as e:
@@ -41,6 +36,32 @@ def load_trade_history():
 def save_trade_history(trades):
     with open(LOG_FILE, "w") as f:
         json.dump({"trades": trades}, f, indent=2)
+
+def fetch_market_data(symbol="RELIANCE.NS"):
+    """Fetches chart data cleanly without triggering rate-limits."""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        data = response.json()
+        result = data['chart']['result'][0]
+        timestamps = result['timestamp']
+        quote = result['indicators']['quote'][0]
+        
+        df = pd.DataFrame({
+            'Open': quote['open'],
+            'High': quote['high'],
+            'Low': quote['low'],
+            'Close': quote['close'],
+            'Volume': quote['volume']
+        }, index=pd.to_datetime(np.array(timestamps)*1000000000))
+        
+        df.dropna(inplace=True)
+        return df
+    except Exception as e:
+        logging.error(f"Direct API Fetch Warning: {e}")
+        return None
 
 def calculate_indicators(df):
     df = df.copy()
@@ -92,24 +113,9 @@ def train_ai_model():
     return model
 
 def analyze_and_trade(symbol="RELIANCE.NS"):
-    global LAST_FETCH_TIME, CACHED_DF
-    current_time = time.time()
-    
-    # 5 मिनट की कूलडाउन ताकि Rate Limit न आए
-    if current_time - LAST_FETCH_TIME < 300 and CACHED_DF is not None:
-        df = CACHED_DF
-    else:
-        try:
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(period="5d", interval="5m")
-            if not df.empty and len(df) >= 30:
-                CACHED_DF = df
-                LAST_FETCH_TIME = current_time
-            else:
-                return
-        except Exception as e:
-            logging.error(f"Yahoo Fetch Error (Rate Limit Avoided): {e}")
-            return
+    df = fetch_market_data(symbol)
+    if df is None or len(df) < 30:
+        return
 
     try:
         df = calculate_indicators(df)
