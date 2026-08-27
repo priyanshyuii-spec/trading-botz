@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
-STARTING_BALANCE = 10000.0  # आपका शुरुआती पैसा (इसे बदल भी सकते हैं)
+STARTING_BALANCE = 10000.0  
 
 INITIAL_TRADES = [
     {"signal": "BUY", "price": 1295.50, "atr": 12.4, "adx": 24, "win_loss": 1, "pnl": 5.20, "rsi": 42.1, "vwap_diff": 1.2},
@@ -75,35 +75,51 @@ def fetch_market_data(symbol="RELIANCE.NS"):
 
 def calculate_indicators(df):
     df = df.copy()
+    
+    # EMA Crossover (9 & 21)
+    df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
+    df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
+    # VWAP
     typical_price = (df['High'] + df['Low'] + df['Close']) / 3
     df['VWAP'] = (typical_price * df['Volume']).cumsum() / df['Volume'].cumsum()
     df['VWAP_Diff'] = df['Close'] - df['VWAP']
 
+    # ATR
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(14).mean()
 
+    # ADX
     up_move = df['High'] - df['High'].shift(1)
     down_move = df['Low'].shift(1) - df['Low']
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-
     tr14 = tr.rolling(14).sum()
     plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(14).sum() / tr14)
     minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(14).sum() / tr14)
-
     di_sum = plus_di + minus_di
     di_diff = np.abs(plus_di - minus_di)
     dx = 100 * (di_diff / np.where(di_sum == 0, 1, di_sum))
     df['ADX'] = pd.Series(dx, index=df.index).rolling(14).mean()
+
+    # Volume Moving Average
+    df['Vol_SMA'] = df['Volume'].rolling(20).mean()
+
+    # Basic Supertrend Logic
+    multiplier = 3.0
+    upperband = ((df['High'] + df['Low']) / 2) + (multiplier * df['ATR'])
+    lowerband = ((df['High'] + df['Low']) / 2) - (multiplier * df['ATR'])
+    df['Supertrend'] = np.where(df['Close'] > lowerband, 1, -1)
 
     return df
 
@@ -139,25 +155,31 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
     try:
         df = calculate_indicators(df)
         latest = df.iloc[-1]
+        prev = df.iloc[-2]
+
         close = float(latest['Close'])
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
-        vwap = float(latest['VWAP'])
         vwap_diff = float(latest['VWAP_Diff'])
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 1.0
         adx = float(latest['ADX']) if not np.isnan(latest['ADX']) else 20.0
 
-        # DUPLICATE CHECK: अगर पिछला ट्रेड भी इसी प्राइस पर हुआ है, तो नया न ले
+        # Duplicate Check
         trades = load_trade_history()
         if len(trades) > 0 and trades[-1].get("price") == close:
             logging.info("Same price detected. Skipping duplicate trade.")
             return
 
-        logging.info(f"Checked Market -> Price: {close:.2f} | RSI: {rsi:.1f} | ADX: {adx:.1f}")
+        # Advanced Strategy Rules
+        ema_bullish = latest['EMA9'] > latest['EMA21'] and prev['EMA9'] <= prev['EMA21']
+        ema_bearish = latest['EMA9'] < latest['EMA21'] and prev['EMA9'] >= prev['EMA21']
+        vol_spike = latest['Volume'] > latest['Vol_SMA']
+        supertrend_buy = latest['Supertrend'] == 1
+        supertrend_sell = latest['Supertrend'] == -1
 
         signal = None
-        if rsi <= 50:
+        if (ema_bullish or (latest['EMA9'] > latest['EMA21'] and rsi < 45)) and supertrend_buy and vol_spike:
             signal = "BUY"
-        elif rsi > 50:
+        elif (ema_bearish or (latest['EMA9'] < latest['EMA21'] and rsi > 55)) and supertrend_sell and vol_spike:
             signal = "SELL"
 
         if signal:
@@ -172,9 +194,10 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                     return
 
             if TRADE_MODE == "PAPER":
-                msg = (f"📝 [PAPER TRADE ALERT]\n"
+                msg = (f"🚀 [ADVANCED STRATEGY ALERT]\n"
                        f"Signal: {signal} | Stock: {symbol}\n"
                        f"Entry: ₹{close:.2f} | SL: ₹{stop_loss:.2f} | Target: ₹{target:.2f}\n"
+                       f"Strategy: EMA Crossover + Supertrend + High Vol\n"
                        f"RSI: {rsi:.1f} | ATR: {atr:.2f} | ADX: {adx:.1f}")
                 send_telegram(msg)
                 
@@ -208,8 +231,6 @@ def home():
     wins = sum(1 for t in trades if t.get('win_loss') == 1)
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
     total_net_pnl = sum(t.get('pnl', 0) for t in trades)
-    
-    # Capital Balance Calculation
     current_wallet = STARTING_BALANCE + total_net_pnl
 
     html = f"""
@@ -293,7 +314,7 @@ def home():
         <main class="main-content">
             <div class="top-bar">
                 <h2>Overview</h2>
-                <div class="status-badge"><i class="fa-solid fa-circle-dot"></i> MODE: {TRADE_MODE} | STATUS: RUNNING 🟢</div>
+                <div class="status-badge"><i class="fa-solid fa-circle-dot"></i> MODE: {TRADE_MODE} | ADVANCED ENGINE ACTIVE ⚡</div>
             </div>
 
             <div class="stats-grid">
@@ -310,9 +331,9 @@ def home():
                     <div class="stat-value win">{win_rate:.1f}%</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-title">Gradient Boosting AI</div>
+                    <div class="stat-title">Active Strategy</div>
                     <div class="stat-value" style="font-size: 1.1rem; color: var(--accent-cyan);">
-                        {"GBM Model Active 🧠" if total_trades >= 10 else f"Training ({total_trades}/10 Trades)"}
+                        EMA + Supertrend + Vol 🎯
                     </div>
                 </div>
             </div>
