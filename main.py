@@ -296,7 +296,47 @@ def home():
             </div>
 
             <div class="chart-section">
-                <div id="tradingview_chart" style="height: 100%; width: 100%;"></div>
+                <!-- TradingView Symbol Overview Widget -->
+                <div class="tradingview-widget-container" style="height:100%;width:100%">
+                  <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
+                  {{
+                    "symbols": [
+                      [
+                        "Reliance Industries",
+                        "BSE:RELIANCE|1D"
+                      ]
+                    ],
+                    "chartOnly": false,
+                    "width": "100%",
+                    "height": "100%",
+                    "locale": "in",
+                    "colorTheme": "dark",
+                    "autosize": true,
+                    "showVolume": true,
+                    "showMA": true,
+                    "hideDateRanges": false,
+                    "hideMarketStatus": false,
+                    "hideSymbolLogo": false,
+                    "scalePosition": "right",
+                    "scaleMode": "Normal",
+                    "fontFamily": "-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif",
+                    "fontSize": "10",
+                    "noTimeScale": false,
+                    "valuesTracking": "1",
+                    "changeMode": "price-and-percent",
+                    "chartType": "area",
+                    "maLineColor": "#2962FF",
+                    "maLineWidth": 1,
+                    "maLength": 9,
+                    "backgroundColor": "rgba(21, 26, 35, 1)",
+                    "lineWidth": 2,
+                    "lineColor": "#00f2fe",
+                    "bottomColor": "rgba(0, 242, 254, 0.05)",
+                    "topColor": "rgba(0, 242, 254, 0.4)"
+                  }}
+                  </script>
+                </div>
             </div>
 
             <div class="table-card">
@@ -329,22 +369,6 @@ def home():
                 </table>
             </div>
         </main>
-
-        <script type="text/javascript">
-            new TradingView.widget({
-                "autosize": true,
-                "symbol": "NSE:RELIANCE",
-                "interval": "D",
-                "timezone": "Asia/Kolkata",
-                "theme": "dark",
-                "style": "1",
-                "locale": "en",
-                "toolbar_bg": "#f1f3f6",
-                "enable_publishing": false,
-                "hide_side_toolbar": false,
-                "container_id": "tradingview_chart"
-            });
-        </script>
     </body>
     </html>
     """
