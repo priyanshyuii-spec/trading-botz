@@ -15,6 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
+STARTING_BALANCE = 10000.0  # आपका शुरुआती पैसा (इसे बदल भी सकते हैं)
 
 INITIAL_TRADES = [
     {"signal": "BUY", "price": 1295.50, "atr": 12.4, "adx": 24, "win_loss": 1, "pnl": 5.20, "rsi": 42.1, "vwap_diff": 1.2},
@@ -118,7 +119,6 @@ def train_ai_model():
     X = df[['rsi', 'vwap_diff', 'atr', 'adx']].fillna(0)
     y = df['win_loss']
     
-    # 2 अलग Class (0 और 1) होना जरूरी है
     if len(np.unique(y)) < 2:
         return None
 
@@ -146,6 +146,12 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 1.0
         adx = float(latest['ADX']) if not np.isnan(latest['ADX']) else 20.0
 
+        # DUPLICATE CHECK: अगर पिछला ट्रेड भी इसी प्राइस पर हुआ है, तो नया न ले
+        trades = load_trade_history()
+        if len(trades) > 0 and trades[-1].get("price") == close:
+            logging.info("Same price detected. Skipping duplicate trade.")
+            return
+
         logging.info(f"Checked Market -> Price: {close:.2f} | RSI: {rsi:.1f} | ADX: {adx:.1f}")
 
         signal = None
@@ -172,7 +178,6 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                        f"RSI: {rsi:.1f} | ATR: {atr:.2f} | ADX: {adx:.1f}")
                 send_telegram(msg)
                 
-                trades = load_trade_history()
                 win_loss = 1 if (rsi < 48 or rsi > 52) else 0 
                 abs_pnl = abs(target - close) if win_loss == 1 else -abs(stop_loss - close)
                 
@@ -204,6 +209,9 @@ def home():
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
     total_net_pnl = sum(t.get('pnl', 0) for t in trades)
     
+    # Capital Balance Calculation
+    current_wallet = STARTING_BALANCE + total_net_pnl
+
     html = f"""
     <!DOCTYPE html>
     <html lang="hi">
@@ -290,16 +298,16 @@ def home():
 
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-title">Total Historical Trades</div>
-                    <div class="stat-value">{total_trades}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">AI Win Rate</div>
-                    <div class="stat-value win">{win_rate:.1f}%</div>
+                    <div class="stat-title">Wallet Capital (Balance)</div>
+                    <div class="stat-value {"win" if current_wallet >= STARTING_BALANCE else "loss"}">₹{current_wallet:.2f}</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-title">Total Net PnL</div>
                     <div class="stat-value {"win" if total_net_pnl >= 0 else "loss"}">₹{total_net_pnl:.2f}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-title">AI Win Rate</div>
+                    <div class="stat-value win">{win_rate:.1f}%</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-title">Gradient Boosting AI</div>
