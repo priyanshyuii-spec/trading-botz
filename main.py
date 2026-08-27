@@ -19,7 +19,7 @@ TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")
 INITIAL_TRADES = [
     {"signal": "BUY", "price": 1295.50, "atr": 12.4, "adx": 24, "win_loss": 1, "pnl": 5.20, "rsi": 42.1, "vwap_diff": 1.2},
     {"signal": "SELL", "price": 1302.10, "atr": 11.8, "adx": 28, "win_loss": 1, "pnl": 4.80, "rsi": 58.4, "vwap_diff": -0.8},
-    {"signal": "BUY", "price": 1288.00, "atr": 13.1, "adx": 22, "win_loss": 1, "pnl": 4.50, "rsi": 38.9, "vwap_diff": 2.1},
+    {"signal": "BUY", "price": 1288.00, "atr": 13.1, "adx": 22, "win_loss": 0, "pnl": -4.50, "rsi": 38.9, "vwap_diff": 2.1},
     {"signal": "BUY", "price": 1292.30, "atr": 12.0, "adx": 26, "win_loss": 1, "pnl": 4.22, "rsi": 41.5, "vwap_diff": 1.5}
 ]
 
@@ -117,9 +117,18 @@ def train_ai_model():
 
     X = df[['rsi', 'vwap_diff', 'atr', 'adx']].fillna(0)
     y = df['win_loss']
-    model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
-    model.fit(X, y)
-    return model
+    
+    # 2 अलग Class (0 और 1) होना जरूरी है
+    if len(np.unique(y)) < 2:
+        return None
+
+    try:
+        model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42)
+        model.fit(X, y)
+        return model
+    except Exception as e:
+        logging.error(f"AI Model Training Error: {e}")
+        return None
 
 def analyze_and_trade(symbol="RELIANCE.NS"):
     df = fetch_market_data(symbol)
@@ -139,7 +148,6 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
 
         logging.info(f"Checked Market -> Price: {close:.2f} | RSI: {rsi:.1f} | ADX: {adx:.1f}")
 
-        # Signal Logic
         signal = None
         if rsi <= 50:
             signal = "BUY"
