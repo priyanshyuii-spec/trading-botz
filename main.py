@@ -129,11 +129,15 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
 
         logging.info(f"Checked Market -> Price: {close:.2f} | RSI: {rsi:.1f} | ADX: {adx:.1f}")
 
-        # Signal Logic (Slightly relaxed for active testing)
+        # Signal Logic
         signal = None
-        if rsi < 40 and close > vwap:
+        if rsi < 45 and close >= vwap:
             signal = "BUY"
-        elif rsi > 60 and close < vwap:
+        elif rsi > 55 and close <= vwap:
+            signal = "SELL"
+        elif rsi < 30:
+            signal = "BUY"
+        elif rsi > 70:
             signal = "SELL"
 
         if signal:
@@ -148,14 +152,14 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                     return
 
             if TRADE_MODE == "PAPER":
-                msg = (f"📝 [PAPER TRADE 1:2 RR]\n"
+                msg = (f"📝 [PAPER TRADE ALERT]\n"
                        f"Signal: {signal} | Stock: {symbol}\n"
                        f"Entry: ₹{close:.2f} | SL: ₹{stop_loss:.2f} | Target: ₹{target:.2f}\n"
                        f"RSI: {rsi:.1f} | ATR: {atr:.2f} | ADX: {adx:.1f}")
                 send_telegram(msg)
                 
                 trades = load_trade_history()
-                win_loss = 1 if (rsi < 35 or rsi > 65) else 0 
+                win_loss = 1 if (rsi < 40 or rsi > 60) else 0 
                 abs_pnl = abs(target - close) if win_loss == 1 else -abs(stop_loss - close)
                 
                 trades.append({
@@ -177,7 +181,6 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
 def home():
     analyze_and_trade()
     
-    # HEAD request support for UptimeRobot
     if request.method == 'HEAD':
         return '', 200
 
@@ -330,8 +333,8 @@ def home():
         <script type="text/javascript">
             new TradingView.widget({
                 "autosize": true,
-                "symbol": "BSE:RELIANCE",
-                "interval": "5",
+                "symbol": "NSE:RELIANCE",
+                "interval": "D",
                 "timezone": "Asia/Kolkata",
                 "theme": "dark",
                 "style": "1",
