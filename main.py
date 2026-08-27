@@ -16,14 +16,6 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 
-# डिफ़ॉल्ट हिस्ट्री ताकि रीस्टार्ट पर डेटा कभी डिलीट न हो
-INITIAL_TRADES = [
-    {"signal": "BUY", "price": 1295.50, "atr": 12.4, "adx": 24, "win_loss": 1, "pnl": 5.20, "rsi": 42.1, "vwap_diff": 1.2},
-    {"signal": "SELL", "price": 1302.10, "atr": 11.8, "adx": 28, "win_loss": 1, "pnl": 4.80, "rsi": 58.4, "vwap_diff": -0.8},
-    {"signal": "BUY", "price": 1288.00, "atr": 13.1, "adx": 22, "win_loss": 1, "pnl": 4.50, "rsi": 38.9, "vwap_diff": 2.1},
-    {"signal": "BUY", "price": 1292.30, "atr": 12.0, "adx": 26, "win_loss": 1, "pnl": 4.22, "rsi": 41.5, "vwap_diff": 1.5}
-]
-
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -34,14 +26,12 @@ def send_telegram(message):
 
 def load_trade_history():
     if not os.path.exists(LOG_FILE):
-        save_trade_history(INITIAL_TRADES)
-        return INITIAL_TRADES
+        return []
     with open(LOG_FILE, "r") as f:
         try:
-            trades = json.load(f).get("trades", [])
-            return trades if len(trades) > 0 else INITIAL_TRADES
+            return json.load(f).get("trades", [])
         except:
-            return INITIAL_TRADES
+            return []
 
 def save_trade_history(trades):
     with open(LOG_FILE, "w") as f:
@@ -348,7 +338,7 @@ def home():
                 "timezone": "Asia/Kolkata",
                 "theme": "dark",
                 "style": "1",
-                "locale": "in",
+                "locale": "en",
                 "toolbar_bg": "#f1f3f6",
                 "enable_publishing": false,
                 "hide_side_toolbar": false,
