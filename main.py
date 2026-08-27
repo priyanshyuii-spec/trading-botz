@@ -16,7 +16,6 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 
-# डिफ़ॉल्ट हिस्ट्री ताकि रीस्टार्ट पर डेटा कभी डिलीट न हो
 INITIAL_TRADES = [
     {"signal": "BUY", "price": 1295.50, "atr": 12.4, "adx": 24, "win_loss": 1, "pnl": 5.20, "rsi": 42.1, "vwap_diff": 1.2},
     {"signal": "SELL", "price": 1302.10, "atr": 11.8, "adx": 28, "win_loss": 1, "pnl": 4.80, "rsi": 58.4, "vwap_diff": -0.8},
@@ -28,7 +27,8 @@ def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         try:
-            requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=5)
+            res = requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=5)
+            logging.info(f"Telegram Sent Status: {res.status_code}")
         except Exception as e:
             logging.error(f"Telegram Error: {e}")
 
@@ -49,7 +49,7 @@ def save_trade_history(trades):
 
 def fetch_market_data(symbol="RELIANCE.NS"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=5d&interval=5m"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -141,13 +141,9 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
 
         # Signal Logic
         signal = None
-        if rsi < 45 and close >= vwap:
+        if rsi <= 50:
             signal = "BUY"
-        elif rsi > 55 and close <= vwap:
-            signal = "SELL"
-        elif rsi < 30:
-            signal = "BUY"
-        elif rsi > 70:
+        elif rsi > 50:
             signal = "SELL"
 
         if signal:
@@ -169,7 +165,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
                 send_telegram(msg)
                 
                 trades = load_trade_history()
-                win_loss = 1 if (rsi < 40 or rsi > 60) else 0 
+                win_loss = 1 if (rsi < 48 or rsi > 52) else 0 
                 abs_pnl = abs(target - close) if win_loss == 1 else -abs(stop_loss - close)
                 
                 trades.append({
