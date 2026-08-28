@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import time
+from datetime import datetime, time as dtime
 import requests
 from flask import Flask, request
 import pandas as pd
@@ -15,6 +16,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 STARTING_BALANCE = 10000.0  
+MAX_TRADES_PER_DAY = 2  # Hard limit per day
 
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
@@ -69,6 +71,7 @@ def calculate_indicators(df):
     df = df.copy()
     df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
     df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
 
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -87,9 +90,29 @@ def calculate_indicators(df):
     return df
 
 def analyze_and_trade(symbol="RELIANCE.NS"):
+    trades = load_trade_history()
+    
+    # 1. Market Hours Filter (09:15 AM to 03:30 PM IST)
+    now = datetime.now()
+    current_time = now.time()
+    market_start = dtime(9, 15)
+    market_end = dtime(15, 30)
+
+    if not (market_start <= current_time <= market_end):
+        logging.info("Market is closed. Waiting for market open.")
+        return
+
+    # 2. Daily Reset Strategy (Date Tracking)
+    today_date = now.strftime("%Y-%m-%d")
+    today_trades = [t for t in trades if t.get("date") == today_date]
+
+    if len(today_trades) >= MAX_TRADES_PER_DAY:
+        logging.info("Daily limit reached (2 Trades Max). Waiting for tomorrow.")
+        return
+
     df = fetch_market_data(symbol)
-    if df is None or len(df) < 25:
-        logging.info("Insufficient data to analyze trade.")
+    if df is None or len(df) < 50:
+        logging.info("Insufficient market data for execution.")
         return
 
     try:
@@ -102,54 +125,47 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 2.0
         ema9 = float(latest['EMA9'])
         ema21 = float(latest['EMA21'])
-        prev_ema9 = float(prev['EMA9'])
-        prev_ema21 = float(prev['EMA21'])
+        ema50 = float(latest['EMA50'])
         vol = float(latest['Volume'])
         vol_sma = float(latest['Vol_SMA']) if not np.isnan(latest['Vol_SMA']) else 0.0
 
-        bullish_crossover = (ema9 > ema21) and (prev_ema9 <= prev_ema21)
-        bearish_crossover = (ema9 < ema21) and (prev_ema9 >= prev_ema21)
-        
+        # Strict Multi-Indicator Signal
         signal = None
-        if bullish_crossover or (ema9 > ema21 and rsi > 52 and vol > vol_sma):
+        if (ema9 > ema21 > ema50) and (rsi > 55) and (vol > 1.2 * vol_sma):
             signal = "BUY"
-        elif bearish_crossover or (ema9 < ema21 and rsi < 48 and vol > vol_sma):
+        elif (ema9 < ema21 < ema50) and (rsi < 45) and (vol > 1.2 * vol_sma):
             signal = "SELL"
 
         if signal:
-            trades = load_trade_history()
-            
-            # Prevent duplicate signal on same price area
-            if len(trades) > 0 and trades[-1].get("signal") == signal and abs(trades[-1].get("price", 0) - close) < 0.8:
-                logging.info("Signal active, skipping redundant trade entry.")
+            if len(trades) > 0 and trades[-1].get("signal") == signal and abs(trades[-1].get("price", 0) - close) < 1.0:
                 return
 
-            stop_loss = close - (1.5 * atr) if signal == "BUY" else close + (1.5 * atr)
-            target = close + (3.0 * atr) if signal == "BUY" else close - (3.0 * atr)
+            stop_loss = close - (1.2 * atr) if signal == "BUY" else close + (1.2 * atr)
+            target = close + (3.6 * atr) if signal == "BUY" else close - (3.6 * atr)
 
-            msg = (f"🎯 [LIVE TRADE SIGNAL]\n"
+            msg = (f"🔥 [DAILY HIGH-REWARD TRADE SIGNAL]\n"
                    f"Stock: RELIANCE (NSE)\n"
                    f"Signal: {signal} 🚀\n"
                    f"Entry Price: ₹{close:.2f}\n"
                    f"Stop Loss: ₹{stop_loss:.2f}\n"
-                   f"Target: ₹{target:.2f}\n"
+                   f"Target (1:3 RR): ₹{target:.2f}\n"
                    f"RSI: {rsi:.1f} | ATR: {atr:.2f}\n"
-                   f"Mode: {TRADE_MODE}")
+                   f"Today's Progress: Trade {len(today_trades)+1}/{MAX_TRADES_PER_DAY}")
             
             send_telegram(msg)
             
-            # Dynamic Real-time Win/Loss Calculation based on Market Trend
             win_loss = 1 if (signal == "BUY" and close > prev['Close']) or (signal == "SELL" and close < prev['Close']) else 0
             pnl_val = (target - close) if win_loss == 1 else -(close - stop_loss if signal == "BUY" else stop_loss - close)
 
             trades.append({
+                "date": today_date,
+                "time": time.strftime("%H:%M:%S"),
                 "rsi": round(rsi, 1),
                 "atr": round(atr, 2),
                 "win_loss": win_loss,
                 "pnl": round(pnl_val, 2),
                 "price": round(close, 2),
-                "signal": signal,
-                "time": time.strftime("%H:%M:%S")
+                "signal": signal
             })
             save_trade_history(trades)
 
@@ -164,6 +180,9 @@ def home():
         return '', 200
 
     trades = load_trade_history()
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    today_count = sum(1 for t in trades if t.get('date') == today_date)
+
     total_trades = len(trades)
     wins = sum(1 for t in trades if t.get('win_loss') == 1)
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
@@ -177,7 +196,7 @@ def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="refresh" content="60">
-        <title>NEXUS PRO AI TRADING TERMINAL</title>
+        <title>NEXUS HIGH-RISK TERMINAL</title>
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
         <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
         <style>
@@ -197,7 +216,7 @@ def home():
             .brand {{ font-size: 1.2rem; font-weight: 800; color: var(--accent-cyan); display: flex; gap: 10px; align-items: center; margin-bottom: 30px; }}
             .main-content {{ flex: 1; padding: 25px; overflow-y: auto; width: 100%; }}
             .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }}
-            .status-badge {{ background: rgba(0, 242, 254, 0.1); color: var(--accent-cyan); padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; border: 1px solid var(--accent-cyan); }}
+            .status-badge {{ background: rgba(0, 242, 254, 0.15); color: var(--accent-cyan); padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; border: 1px solid var(--accent-cyan); }}
             .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px; }}
             .stat-card {{ background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }}
             .stat-title {{ color: var(--text-sub); font-size: 0.8rem; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }}
@@ -225,8 +244,8 @@ def home():
 
         <main class="main-content">
             <div class="top-bar">
-                <h2>Live Automated Terminal</h2>
-                <div class="status-badge"><i class="fa-solid fa-circle-dot"></i> MODE: {TRADE_MODE} | LIVE ENGINE</div>
+                <h2>Live High-Risk Terminal</h2>
+                <div class="status-badge"><i class="fa-solid fa-clock"></i> TODAY'S TRADES: {today_count}/2 | AUTO-RESET DAILY</div>
             </div>
 
             <div class="stats-grid">
@@ -243,7 +262,7 @@ def home():
                     <div class="stat-value win">{win_rate:.1f}%</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-title">Total Trades</div>
+                    <div class="stat-title">Total Execution</div>
                     <div class="stat-value" style="color: var(--accent-cyan);">{total_trades}</div>
                 </div>
             </div>
@@ -253,10 +272,10 @@ def home():
             </div>
 
             <div class="table-card">
-                <h3>📊 Execution Log & Signal History</h3>
+                <h3>📊 Execution Log & History</h3>
                 <table>
                     <tr>
-                        <th>Time</th>
+                        <th>Date & Time</th>
                         <th>Signal</th>
                         <th>Price</th>
                         <th>ATR</th>
@@ -265,14 +284,14 @@ def home():
     """
     
     if len(trades) == 0:
-        html += """<tr><td colspan="5" style="text-align:center; color: var(--text-sub);">No trades taken yet today. Waiting for strategy setup...</td></tr>"""
+        html += """<tr><td colspan="5" style="text-align:center; color: var(--text-sub);">Waiting for high-conviction setup (Max 2 trades/day)...</td></tr>"""
     else:
         for t in reversed(trades[-10:]):
             sig_cls = "win" if t.get('signal') == "BUY" else "loss"
             res_cls = "win" if t.get('win_loss') == 1 else "loss"
             pnl_val = t.get('pnl', 0)
             pnl_str = f"+₹{pnl_val:.2f}" if pnl_val >= 0 else f"-₹{abs(pnl_val):.2f}"
-            trade_time = t.get('time', 'Live')
+            trade_time = f"{t.get('date', '')} {t.get('time', '')}"
             
             html += f"""
             <tr>
