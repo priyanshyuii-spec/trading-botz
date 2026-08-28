@@ -376,8 +376,8 @@ def home():
         <script type="text/javascript">
             new TradingView.widget({
                 "autosize": true,
-                "symbol": "NSE:RELIANCE",
-                "interval": "D",
+                "symbol": "BSE:RELIANCE",
+                "interval": "5",
                 "timezone": "Asia/Kolkata",
                 "theme": "dark",
                 "style": "1",
