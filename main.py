@@ -16,7 +16,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 STARTING_BALANCE = 10000.0  
-MAX_TRADES_PER_DAY = 2  # Hard limit per day
+MAX_TRADES_PER_DAY = 3  # High-Fi Mode: 2 to 3 trades daily
 
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
@@ -69,30 +69,40 @@ def fetch_market_data(symbol="RELIANCE.NS"):
 
 def calculate_indicators(df):
     df = df.copy()
-    df['EMA9'] = df['Close'].ewm(span=9, adjust=False).mean()
-    df['EMA21'] = df['Close'].ewm(span=21, adjust=False).mean()
-    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    
+    # 1. VWAP Calculation
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+    df['VWAP'] = (typical_price * df['Volume']).cumsum() / df['Volume'].cumsum()
 
+    # 2. MACD (12, 26, 9)
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+    # 3. RSI (14)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / np.where(loss == 0, 1, loss)
     df['RSI'] = 100 - (100 / (1 + rs))
 
+    # 4. ATR for dynamic Stop Loss / Target
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = tr.rolling(14).mean()
 
-    df['Vol_SMA'] = df['Volume'].rolling(10).mean()
+    # 5. EMA 20
+    df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
 
     return df
 
 def analyze_and_trade(symbol="RELIANCE.NS"):
     trades = load_trade_history()
     
-    # 1. Market Hours Filter (09:15 AM to 03:30 PM IST)
+    # Market Timing (09:15 AM to 03:30 PM IST)
     now = datetime.now()
     current_time = now.time()
     market_start = dtime(9, 15)
@@ -102,16 +112,15 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         logging.info("Market is closed. Waiting for market open.")
         return
 
-    # 2. Daily Reset Strategy (Date Tracking)
     today_date = now.strftime("%Y-%m-%d")
     today_trades = [t for t in trades if t.get("date") == today_date]
 
     if len(today_trades) >= MAX_TRADES_PER_DAY:
-        logging.info("Daily limit reached (2 Trades Max). Waiting for tomorrow.")
+        logging.info("Daily limit reached (3 Trades Max). Waiting for tomorrow.")
         return
 
     df = fetch_market_data(symbol)
-    if df is None or len(df) < 50:
+    if df is None or len(df) < 35:
         logging.info("Insufficient market data for execution.")
         return
 
@@ -121,36 +130,44 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         prev = df.iloc[-2]
 
         close = float(latest['Close'])
+        vwap = float(latest['VWAP'])
+        macd = float(latest['MACD'])
+        macd_signal = float(latest['Signal_Line'])
+        prev_macd = float(prev['MACD'])
+        prev_macd_signal = float(prev['Signal_Line'])
         rsi = float(latest['RSI']) if not np.isnan(latest['RSI']) else 50.0
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 2.0
-        ema9 = float(latest['EMA9'])
-        ema21 = float(latest['EMA21'])
-        ema50 = float(latest['EMA50'])
-        vol = float(latest['Volume'])
-        vol_sma = float(latest['Vol_SMA']) if not np.isnan(latest['Vol_SMA']) else 0.0
+        ema20 = float(latest['EMA20'])
 
-        # Strict Multi-Indicator Signal
+        # HIGH-FI INTRADAY TRADING SIGNALS (VWAP + MACD Crossover + RSI)
+        macd_bullish = (macd > macd_signal) or (prev_macd <= prev_macd_signal and macd > macd_signal)
+        macd_bearish = (macd < macd_signal) or (prev_macd >= prev_macd_signal and macd < macd_signal)
+
         signal = None
-        if (ema9 > ema21 > ema50) and (rsi > 55) and (vol > 1.2 * vol_sma):
+        # BUY Setup: Price above VWAP & EMA20 + MACD Bullish + RSI > 50
+        if (close > vwap) and (close > ema20) and macd_bullish and (rsi > 50):
             signal = "BUY"
-        elif (ema9 < ema21 < ema50) and (rsi < 45) and (vol > 1.2 * vol_sma):
+        # SELL Setup: Price below VWAP & EMA20 + MACD Bearish + RSI < 50
+        elif (close < vwap) and (close < ema20) and macd_bearish and (rsi < 50):
             signal = "SELL"
 
         if signal:
             if len(trades) > 0 and trades[-1].get("signal") == signal and abs(trades[-1].get("price", 0) - close) < 1.0:
                 return
 
-            stop_loss = close - (1.2 * atr) if signal == "BUY" else close + (1.2 * atr)
-            target = close + (3.6 * atr) if signal == "BUY" else close - (3.6 * atr)
+            # Balanced High-Fi Risk Reward (1:2)
+            stop_loss = close - (1.0 * atr) if signal == "BUY" else close + (1.0 * atr)
+            target = close + (2.0 * atr) if signal == "BUY" else close - (2.0 * atr)
 
-            msg = (f"🔥 [DAILY HIGH-REWARD TRADE SIGNAL]\n"
+            msg = (f"🚀 [HIGH-FI INTRADAY SIGNAL]\n"
                    f"Stock: RELIANCE (NSE)\n"
-                   f"Signal: {signal} 🚀\n"
+                   f"Signal: {signal} 🔥\n"
                    f"Entry Price: ₹{close:.2f}\n"
-                   f"Stop Loss: ₹{stop_loss:.2f}\n"
-                   f"Target (1:3 RR): ₹{target:.2f}\n"
-                   f"RSI: {rsi:.1f} | ATR: {atr:.2f}\n"
-                   f"Today's Progress: Trade {len(today_trades)+1}/{MAX_TRADES_PER_DAY}")
+                   f"VWAP: ₹{vwap:.2f}\n"
+                   f"Stop Loss (1x ATR): ₹{stop_loss:.2f}\n"
+                   f"Target (2x ATR): ₹{target:.2f}\n"
+                   f"RSI: {rsi:.1f} | MACD: {macd:.2f}\n"
+                   f"Daily Progress: {len(today_trades)+1}/{MAX_TRADES_PER_DAY}")
             
             send_telegram(msg)
             
@@ -196,7 +213,7 @@ def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="refresh" content="60">
-        <title>NEXUS HIGH-RISK TERMINAL</title>
+        <title>NEXUS HIGH-FI TERMINAL</title>
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
         <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
         <style>
@@ -244,8 +261,8 @@ def home():
 
         <main class="main-content">
             <div class="top-bar">
-                <h2>Live High-Risk Terminal</h2>
-                <div class="status-badge"><i class="fa-solid fa-clock"></i> TODAY'S TRADES: {today_count}/2 | AUTO-RESET DAILY</div>
+                <h2>Live High-Fi Terminal (VWAP + MACD)</h2>
+                <div class="status-badge"><i class="fa-solid fa-clock"></i> TODAY'S TRADES: {today_count}/3 | AUTO-RESET DAILY</div>
             </div>
 
             <div class="stats-grid">
@@ -272,7 +289,7 @@ def home():
             </div>
 
             <div class="table-card">
-                <h3>📊 Execution Log & History</h3>
+                <h3>📊 High-Fi Intraday History</h3>
                 <table>
                     <tr>
                         <th>Date & Time</th>
@@ -284,7 +301,7 @@ def home():
     """
     
     if len(trades) == 0:
-        html += """<tr><td colspan="5" style="text-align:center; color: var(--text-sub);">Waiting for high-conviction setup (Max 2 trades/day)...</td></tr>"""
+        html += """<tr><td colspan="5" style="text-align:center; color: var(--text-sub);">Scanning VWAP & MACD for intraday setups (Max 3 trades/day)...</td></tr>"""
     else:
         for t in reversed(trades[-10:]):
             sig_cls = "win" if t.get('signal') == "BUY" else "loss"
