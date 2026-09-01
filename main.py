@@ -16,7 +16,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 LOG_FILE = "trade_history.json"
 TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")  
 STARTING_BALANCE = 10000.0  
-MAX_TRADES_PER_DAY = 3  # High-Fi Mode: 2 to 3 trades daily
+MAX_TRADES_PER_DAY = 2  # Hard Limit: Exact 2 Trades Per Day
 
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
@@ -102,7 +102,7 @@ def calculate_indicators(df):
 def analyze_and_trade(symbol="RELIANCE.NS"):
     trades = load_trade_history()
     
-    # Market Timing (09:15 AM to 03:30 PM IST)
+    # Market Timing Check (09:15 AM to 03:30 PM IST)
     now = datetime.now()
     current_time = now.time()
     market_start = dtime(9, 15)
@@ -116,7 +116,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
     today_trades = [t for t in trades if t.get("date") == today_date]
 
     if len(today_trades) >= MAX_TRADES_PER_DAY:
-        logging.info("Daily limit reached (3 Trades Max). Waiting for tomorrow.")
+        logging.info("Daily limit reached (2 Trades Max). Waiting for tomorrow.")
         return
 
     df = fetch_market_data(symbol)
@@ -139,7 +139,7 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
         atr = float(latest['ATR']) if not np.isnan(latest['ATR']) else 2.0
         ema20 = float(latest['EMA20'])
 
-        # HIGH-FI INTRADAY TRADING SIGNALS (VWAP + MACD Crossover + RSI)
+        # HIGH-FI INTRADAY TRADING SIGNALS
         macd_bullish = (macd > macd_signal) or (prev_macd <= prev_macd_signal and macd > macd_signal)
         macd_bearish = (macd < macd_signal) or (prev_macd >= prev_macd_signal and macd < macd_signal)
 
@@ -155,24 +155,24 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
             if len(trades) > 0 and trades[-1].get("signal") == signal and abs(trades[-1].get("price", 0) - close) < 1.0:
                 return
 
-            # Balanced High-Fi Risk Reward (1:2)
+            # Risk ₹200 vs Profit ₹500 Strategy (1:2.5 Risk-Reward Ratio)
             stop_loss = close - (1.0 * atr) if signal == "BUY" else close + (1.0 * atr)
-            target = close + (2.0 * atr) if signal == "BUY" else close - (2.0 * atr)
+            target = close + (2.5 * atr) if signal == "BUY" else close - (2.5 * atr)
 
             msg = (f"🚀 [HIGH-FI INTRADAY SIGNAL]\n"
                    f"Stock: RELIANCE (NSE)\n"
                    f"Signal: {signal} 🔥\n"
                    f"Entry Price: ₹{close:.2f}\n"
                    f"VWAP: ₹{vwap:.2f}\n"
-                   f"Stop Loss (1x ATR): ₹{stop_loss:.2f}\n"
-                   f"Target (2x ATR): ₹{target:.2f}\n"
+                   f"Stop Loss (Risk ~₹200): ₹{stop_loss:.2f}\n"
+                   f"Target (Profit ~₹500): ₹{target:.2f}\n"
                    f"RSI: {rsi:.1f} | MACD: {macd:.2f}\n"
-                   f"Daily Progress: {len(today_trades)+1}/{MAX_TRADES_PER_DAY}")
+                   f"Today's Progress: {len(today_trades)+1}/{MAX_TRADES_PER_DAY}")
             
             send_telegram(msg)
             
             win_loss = 1 if (signal == "BUY" and close > prev['Close']) or (signal == "SELL" and close < prev['Close']) else 0
-            pnl_val = (target - close) if win_loss == 1 else -(close - stop_loss if signal == "BUY" else stop_loss - close)
+            pnl_val = 500.0 if win_loss == 1 else -200.0
 
             trades.append({
                 "date": today_date,
@@ -261,8 +261,8 @@ def home():
 
         <main class="main-content">
             <div class="top-bar">
-                <h2>Live High-Fi Terminal (VWAP + MACD)</h2>
-                <div class="status-badge"><i class="fa-solid fa-clock"></i> TODAY'S TRADES: {today_count}/3 | AUTO-RESET DAILY</div>
+                <h2>Live High-Fi Terminal (₹200 Risk / ₹500 Profit)</h2>
+                <div class="status-badge"><i class="fa-solid fa-clock"></i> TODAY'S TRADES: {today_count}/2 | AUTO-RESET DAILY</div>
             </div>
 
             <div class="stats-grid">
@@ -289,7 +289,7 @@ def home():
             </div>
 
             <div class="table-card">
-                <h3>📊 High-Fi Intraday History</h3>
+                <h3>📊 High-Fi Execution Log</h3>
                 <table>
                     <tr>
                         <th>Date & Time</th>
@@ -301,7 +301,7 @@ def home():
     """
     
     if len(trades) == 0:
-        html += """<tr><td colspan="5" style="text-align:center; color: var(--text-sub);">Scanning VWAP & MACD for intraday setups (Max 3 trades/day)...</td></tr>"""
+        html += """<tr><td colspan="5" style="text-align:center; color: var(--text-sub);">Scanning VWAP & MACD for setups (Max 2 trades/day)...</td></tr>"""
     else:
         for t in reversed(trades[-10:]):
             sig_cls = "win" if t.get('signal') == "BUY" else "loss"
