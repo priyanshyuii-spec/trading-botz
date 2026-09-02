@@ -34,7 +34,7 @@ def load_trade_history():
         try:
             trades = json.load(f).get("trades", [])
             return trades
-        except:
+        except Exception:
             return []
 
 def save_trade_history(trades):
@@ -44,11 +44,25 @@ def save_trade_history(trades):
 def fetch_market_data(symbol="RELIANCE.NS"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=5m"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://finance.yahoo.com'
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        
+        # Checking HTTP Status & Content
+        if response.status_code != 200 or not response.text.strip():
+            logging.error(f"Market Data Fetch Failed. Status: {response.status_code}")
+            return None
+            
         data = response.json()
+        
+        # Validating API Data Structure
+        if 'chart' not in data or 'result' not in data['chart'] or not data['chart']['result']:
+            logging.error("Market Data Format Error: Invalid JSON structure received")
+            return None
+            
         result = data['chart']['result'][0]
         timestamps = result['timestamp']
         quote = result['indicators']['quote'][0]
@@ -63,6 +77,9 @@ def fetch_market_data(symbol="RELIANCE.NS"):
         
         df.dropna(inplace=True)
         return df
+    except requests.exceptions.JSONDecodeError:
+        logging.error("Market Data Fetch Error: Non-JSON response received (API blocked or empty)")
+        return None
     except Exception as e:
         logging.error(f"Market Data Fetch Error: {e}")
         return None
@@ -229,7 +246,7 @@ def home():
             }}
             * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }}
             body {{ background-color: var(--bg-dark); color: var(--text-main); display: flex; min-height: 100vh; flex-direction: row; }}
-            .sidebar {{ width: 240px; background: #0e131f; border-right: 1px solid var(--border); padding: 24px 16px; shrink: 0; }}
+            .sidebar {{ width: 240px; background: #0e131f; border-right: 1px solid var(--border); padding: 24px 16px; flex-shrink: 0; }}
             .brand {{ font-size: 1.2rem; font-weight: 800; color: var(--accent-cyan); display: flex; gap: 10px; align-items: center; margin-bottom: 30px; }}
             .main-content {{ flex: 1; padding: 25px; overflow-y: auto; width: 100%; }}
             .top-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }}
