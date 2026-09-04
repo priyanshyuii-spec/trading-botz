@@ -7,6 +7,7 @@ import requests
 from flask import Flask, request
 import pandas as pd
 import numpy as np
+import threading
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,34 @@ TRADE_MODE = os.getenv("TRADE_MODE", "PAPER")
 STARTING_BALANCE = 10000.0  
 MAX_TRADES_PER_DAY = 2  # Hard Limit: Exact 2 Trades Per Day
 
+# ==========================================
+# 🔄 INTERNAL SELF-PING SYSTEM (24/7 UPTIME)
+# ==========================================
+def keep_alive():
+    """
+    यह फंक्शन सर्वर को इनएक्टिविटी स्लीप से बचाने के लिए 
+    हर 3 मिनट (180 सेकंड) में खुद की URL पर रिक्वेस्ट भेजता है।
+    """
+    time.sleep(15)  # App स्टार्ट होने के 15 सेकंड बाद पिंग शुरू होगा
+    
+    # अपनी Render की URL सुनिश्चित करें
+    SERVER_URL = "https://trading-botz-1.onrender.com"
+    
+    while True:
+        try:
+            res = requests.get(SERVER_URL, timeout=10)
+            logging.info(f"Self-Ping Status: {res.status_code} | Server Active")
+        except Exception as e:
+            logging.error(f"Self-Ping Error: {e}")
+            
+        time.sleep(180)  # हर 3 मिनट में पिंग करेगा
+
+# बैकग्राउंड थ्रेड में Self-Ping चालू करें
+threading.Thread(target=keep_alive, daemon=True).start()
+
+# ==========================================
+# 📩 TELEGRAM & HISTORY FUNCTIONS
+# ==========================================
 def send_telegram(message):
     if TELEGRAM_TOKEN and CHAT_ID:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -41,6 +70,9 @@ def save_trade_history(trades):
     with open(LOG_FILE, "w") as f:
         json.dump({"trades": trades}, f, indent=2)
 
+# ==========================================
+# 📊 MARKET DATA & INDICATORS
+# ==========================================
 def fetch_market_data(symbol="RELIANCE.NS"):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=5m"
     headers = {
@@ -99,6 +131,9 @@ def calculate_indicators(df):
 
     return df
 
+# ==========================================
+# 🎯 STRATEGY ANALYSIS & EXECUTION
+# ==========================================
 def analyze_and_trade(symbol="RELIANCE.NS"):
     trades = load_trade_history()
     
@@ -189,6 +224,9 @@ def analyze_and_trade(symbol="RELIANCE.NS"):
     except Exception as e:
         logging.error(f"Strategy Processing Error: {e}")
 
+# ==========================================
+# 🖥️ FLASK WEB TERMINAL ROUTE
+# ==========================================
 @app.route('/', methods=['GET', 'HEAD'])
 def home():
     analyze_and_trade()
@@ -346,4 +384,5 @@ def home():
     return html
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host="0.0.0.0", port=port)
